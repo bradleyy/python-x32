@@ -53,6 +53,8 @@ def request_x32_to_send_change_notifications(client):
     """
     while True:
         client.send(OSC.OSCMessage("/xremote"))
+        client.send(OSC.OSCMessage("/ch/01/mix/on"))
+        client.send(OSC.OSCMessage("/ch/02/mix/on"))
         time.sleep(7)
 
 def print_all_x32_change_messages(x32_address, server_udp_port):
