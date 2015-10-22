@@ -301,7 +301,8 @@ class OSCMessage(object):
 		"""Returns the binary representation of the message
 		"""
 		binary = OSCString(self.address)
-		binary += OSCString(self.typetags)
+		if self.typetags != ',':
+			binary += OSCString(self.typetags)
 		binary += self.message
 		
 		return binary
