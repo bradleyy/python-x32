@@ -44,7 +44,7 @@ targets = ( ( '10.0.0.31', 10024, r'.*' ),  ( 'localhost', 10025, r'foo' ) )
 #targets = ( ( 'localhost', 10024, r'.*' ), ( 'localhost', 10025, r'/ch/02/.*' ), ( 'localhost', 10025, r'foo' ))
 
 
-
+clients = {}
 
 
 def request_x32_to_send_change_notifications(client):
@@ -72,27 +72,52 @@ def request_x32_to_send_change_notifications(client):
         client.send(OSC.OSCMessage("/ch/17/mix/02/level"))
         time.sleep(7)
 
-def print_all_x32_change_messages(x32_address, server_udp_port):
-                
-    def msgFilter_handler(addr, tags, data, client_address):
+def serve_proxy(proxy_server):
+    proxy_server.serve_forever()
+
+def print_all_x32_change_messages(x32_address, server_udp_port, client_udp_port):
+
+    def send_to_clients(addr, data):
         # check regexp for each target, if true, send to ip:port of target
         txt = 'OSCMessage("%s", %s)' % (addr, data)
         print "input:" + txt
-        
-        for i,targetClient in enumerate(connections):
-        	if re.match( targets[i][2], addr):
-        		print "send: " + txt + " to: " + targets[i][0] + ":", targets[i][1]
-         	
-       			targetClient.send(OSC.OSCMessage(addr,data))
-     
-                                
 
-    server = OSC.OSCServer(("", server_udp_port))
-    server.addMsgHandler("default", msgFilter_handler)
-    client = OSC.OSCClient(server=server) #This makes sure that client and server uses same socket. This has to be this way, as the X32 sends notifications back to same port as the /xremote message came from 
+        for i,targetClient in enumerate(connections):
+            if re.match( targets[i][2], addr):
+                print "send: " + txt + " to: " + targets[i][0] + ":", targets[i][1]
+
+                targetClient.send(OSC.OSCMessage(addr,data))
+
+        for i, targetClient in enumerate(clients):
+            clients[targetClient].send(OSC.OSCMessage(addr, data))
+
+    def x32_msg_handler(addr, tags, data, client_address):
+        send_to_clients(addr, data)
+
+    def client_msg_handler(addr, tags, data, client_address):
+        txt = '[%s] OSCMessage("%s", %s)' % (client_address, addr, data)
+        print "input:" + txt
+        if client_address not in clients:
+            clients[client_address] = OSC.OSCClient()
+            clients[client_address].connect(client_address)
+        print clients
+        x32_client.send(OSC.OSCMessage(addr, data))
+        send_to_clients(addr, data) # x32 will not echo our own messages, we must do it ourselves
+
+
+    x32_server = OSC.OSCServer(("", server_udp_port))
+    x32_server.addMsgHandler("default", x32_msg_handler)
+    x32_client = OSC.OSCClient(server=x32_server) #This makes sure that client and server uses same socket. This has to be this way, as the X32 sends notifications back to same port as the /xremote message came from
     
-    client.connect((x32_address, 10023))
-    
+    x32_client.connect((x32_address, 10023))
+
+    # gateway for proxied clients
+    proxy_server = OSC.OSCServer(("", client_udp_port))
+    proxy_server.addMsgHandler("default", client_msg_handler)
+
+    proxy_thread = threading.Thread(target=serve_proxy, kwargs = {"proxy_server": proxy_server})
+    proxy_thread.daemon=True # to get ctrl+c work
+    proxy_thread.start()
     
     # connections to targets
     connections = list()
@@ -103,10 +128,11 @@ def print_all_x32_change_messages(x32_address, server_udp_port):
     	connections[i].connect((host[0],host[1]))    	
     print "\n"
     
-    thread = threading.Thread(target=request_x32_to_send_change_notifications, kwargs = {"client": client})
+    thread = threading.Thread(target=request_x32_to_send_change_notifications, kwargs = {"client": x32_client})
     thread.daemon=True # to get ctrl+c work
     thread.start()
-    server.serve_forever()
+
+    x32_server.serve_forever()
 
 if __name__ == '__main__':
     import argparse
@@ -115,8 +141,10 @@ if __name__ == '__main__':
     parser.add_argument('--address', required = True,                        
                         help='name/ip-address of Behringer X32 mixing desk')
     parser.add_argument('--port', default = 10300,                        
-                        help='UDP-port to open on this machine.')
+                        help='UDP-port to open on this machine for X32 return traffic.')
+    parser.add_argument('--client-port', default = 10023,
+                        help='UDP-port to open on this machine for clients.')
 
     args = parser.parse_args()
-    print_all_x32_change_messages(x32_address = args.address, server_udp_port = args.port)
+    print_all_x32_change_messages(x32_address = args.address, server_udp_port = args.port, client_udp_port = args.client_port)
     
